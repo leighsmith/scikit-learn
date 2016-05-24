@@ -406,6 +406,69 @@ def libsvm_sparse_decision_function(
 
     return dec_values
 
+def save_model_file(const char *model_file_name,
+            np.ndarray[np.float64_t, ndim=2, mode='c'] X,
+            np.ndarray[np.int32_t, ndim=1, mode='c'] support,
+            np.ndarray[np.float64_t, ndim=2, mode='c'] SV,
+            np.ndarray[np.int32_t, ndim=1, mode='c'] nSV,
+            np.ndarray[np.float64_t, ndim=2, mode='c'] sv_coef,
+            np.ndarray[np.float64_t, ndim=1, mode='c'] intercept,
+            np.ndarray[np.float64_t, ndim=1, mode='c'] probA=np.empty(0),
+            np.ndarray[np.float64_t, ndim=1, mode='c'] probB=np.empty(0),
+            int svm_type=0, int kernel_type=2, int degree=3,
+            double gamma=0.1, double coef0=0., double tol=1e-3, double C=1., double nu=0.5, 
+    	    int shrinking=1, int probability=0, int max_iter=-1, int random_seed=0,
+	    np.ndarray[np.float64_t, ndim=1, mode='c']
+                class_weight=np.empty(0),
+            np.ndarray[np.float64_t, ndim=1, mode='c']
+                sample_weight=np.empty(0),
+            double cache_size=100.):
+    """
+    Save the model to a libsvm format text file.
+
+    Parameters
+    ----------
+    model_file_name: The filename of the model file to write.
+    X: array-like, dtype=float, size=[n_samples, n_features]
+    svm_type : {0, 1, 2, 3, 4}
+        Type of SVM: C SVC, nu SVC, one class, epsilon SVR, nu SVR
+    kernel_type : {'linear', 'rbf', 'poly', 'sigmoid', 'precomputed'}
+        Type of kernel.
+    degree : int
+        Degree of the polynomial kernel.
+    gamma : float
+        Gamma parameter in RBF kernel.
+    coef0 : float
+        Independent parameter in poly/sigmoid kernel.
+
+    Returns
+    -------
+    Nothing.
+    """
+    cdef svm_parameter *param
+    cdef svm_csr_model *model
+    cdef int rv
+
+    cdef np.ndarray[np.int32_t, ndim=1, mode='c'] \
+        class_weight_label = np.arange(class_weight.shape[0], dtype=np.int32)
+
+    param = set_parameter(
+        svm_type, kernel_type, degree, gamma, coef0, nu, cache_size,
+        C, tol, tol, shrinking, probability, <int>
+        class_weight.shape[0], class_weight_label.data,
+        class_weight.data, max_iter, random_seed)
+
+    # model = csr_set_model(param, <int> nSV.shape[0], SV.data, SV.shape,
+    #                   support.data, support.shape, sv_coef.strides,
+    #                   sv_coef.data, intercept.data, nSV.data, probA.data, probB.data)
+
+    # try:
+    #     with nogil:
+    #         rv = csr_save_model(model_file_name, model)
+    #     if rv < 0:
+    #         raise IOError("Unable to write to file %s" % model_file_name)
+    # finally:
+    #     free_model(model)
 
 def set_verbosity_wrap(int verbosity):
     """

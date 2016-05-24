@@ -65,5 +65,7 @@ cdef extern from "libsvm_helper.c":
     np.npy_intp  get_l  (svm_model *)
     np.npy_intp  get_nr (svm_model *)
     int  free_problem   (svm_problem *)
+    # TODO check if nogil actually needed.
+    int save_model	(const char *, svm_model *) nogil
     int  free_model     (svm_model *)
     void set_verbosity(int)

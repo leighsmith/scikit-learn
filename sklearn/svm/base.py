@@ -185,8 +185,8 @@ class BaseLibSVM(six.with_metaclass(ABCMeta, BaseEstimator)):
         if self.verbose:  # pragma: no cover
             print('[LibSVM]', end='')
 
-        seed = rnd.randint(np.iinfo('i').max)
-        fit(X, y, sample_weight, solver_type, kernel, random_seed=seed)
+        self._seed = rnd.randint(np.iinfo('i').max)
+        fit(X, y, sample_weight, solver_type, kernel, random_seed=self._seed)
         # see comment on the other call to np.iinfo in this file
 
         self.shape_fit_ = X.shape
@@ -491,6 +491,45 @@ class BaseLibSVM(six.with_metaclass(ABCMeta, BaseEstimator)):
     def _get_coef(self):
         return safe_sparse_dot(self._dual_coef_, self.support_vectors_)
 
+    def save_model_file(self, model_file_name):
+        # TODO somehow self._sparse is not created?
+        # save_model_file = self._sparse_save_model_file if self._sparse else self._dense_save_model_file
+        save_model_file_function = self._dense_save_model_file
+        if self.verbose:  # pragma: no cover
+            print('[LibSVM]', end='')
+        save_model_file_function(model_file_name)
+
+    def _sparse_save_model_file(self, model_file_name):
+        print('_sparse_save_model_file')
+        libsvm_sparse.save_model_file(
+            model_file_name,
+            svm_type=solver_type, sample_weight=sample_weight,
+            class_weight=self.class_weight_, kernel=self.kernel, C=self.C,
+            nu=self.nu, probability=self.probability, degree=self.degree,
+            shrinking=self.shrinking, tol=self.tol,
+            cache_size=self.cache_size, coef0=self.coef0,
+            gamma=self._gamma, epsilon=self.epsilon,
+            max_iter=self.max_iter, random_seed=self._seed)
+
+    def _dense_save_model_file(self, model_file_name):
+        print('_dense_save_model_file')
+        solver_type = LIBSVM_IMPL.index(self._impl)
+        libsvm.save_model_file(
+            model_file_name,
+            self.support_,
+            self.support_vectors_,
+            self.n_support_,
+            self._dual_coef_,
+            self._intercept_,
+            probA=self.probA_,
+            probB=self.probB_,
+            svm_type=solver_type, 
+            class_weight=self.class_weight_, kernel=self.kernel, C=self.C,
+            nu=self.nu, probability=self.probability, degree=self.degree,
+            shrinking=self.shrinking, tol=self.tol,
+            cache_size=self.cache_size, coef0=self.coef0,
+            gamma=self._gamma, epsilon=self.epsilon,
+            max_iter=self.max_iter, random_seed=self._seed)
 
 class BaseSVC(six.with_metaclass(ABCMeta, BaseLibSVM, ClassifierMixin)):
     """ABC for LibSVM-based classifiers."""

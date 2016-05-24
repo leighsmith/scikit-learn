@@ -348,6 +348,13 @@ int copy_predict_proba(char *predict, struct svm_model *model, npy_intp *predict
     return 0;
 }
 
+/*
+ * Write the model to a libsvm compatible text file.
+ */
+int save_model(const char *model_file_name, struct svm_model *model)
+{
+    svm_save_model(model_file_name, model);
+}
 
 /*
  * Some free routines. Some of them are nontrivial since a lot of
