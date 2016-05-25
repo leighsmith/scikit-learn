@@ -17,6 +17,8 @@ cdef extern from "svm.h":
     cdef struct svm_csr_problem
     char *svm_csr_check_parameter(svm_csr_problem *, svm_parameter *)
     svm_csr_model *svm_csr_train(svm_csr_problem *, svm_parameter *, int *) nogil
+    # TODO check if nogil actually needed.
+    int svm_csr_save_model(const char *, svm_csr_model *) nogil
     void svm_csr_free_and_destroy_model(svm_csr_model** model_ptr_ptr)
 
 cdef extern from "libsvm_sparse_helper.c":
@@ -407,7 +409,6 @@ def libsvm_sparse_decision_function(
     return dec_values
 
 def save_model_file(const char *model_file_name,
-            np.ndarray[np.float64_t, ndim=2, mode='c'] X,
             np.ndarray[np.int32_t, ndim=1, mode='c'] support,
             np.ndarray[np.float64_t, ndim=2, mode='c'] SV,
             np.ndarray[np.int32_t, ndim=1, mode='c'] nSV,
@@ -415,8 +416,8 @@ def save_model_file(const char *model_file_name,
             np.ndarray[np.float64_t, ndim=1, mode='c'] intercept,
             np.ndarray[np.float64_t, ndim=1, mode='c'] probA=np.empty(0),
             np.ndarray[np.float64_t, ndim=1, mode='c'] probB=np.empty(0),
-            int svm_type=0, int kernel_type=2, int degree=3,
-            double gamma=0.1, double coef0=0., double tol=1e-3, double C=1., double nu=0.5, 
+            int svm_type=0, str kernel='rbf', int degree=3,
+            double gamma=0.1, double epsilon=0.1, double coef0=0., double tol=1e-3, double C=1., double nu=0.5, 
     	    int shrinking=1, int probability=0, int max_iter=-1, int random_seed=0,
 	    np.ndarray[np.float64_t, ndim=1, mode='c']
                 class_weight=np.empty(0),
@@ -449,22 +450,25 @@ def save_model_file(const char *model_file_name,
     cdef svm_csr_model *model
     cdef int rv
 
+    LIBSVM_KERNEL_TYPES = ['linear', 'poly', 'rbf', 'sigmoid', 'precomputed']
+    kernel_index = LIBSVM_KERNEL_TYPES.index(kernel)
+
     cdef np.ndarray[np.int32_t, ndim=1, mode='c'] \
         class_weight_label = np.arange(class_weight.shape[0], dtype=np.int32)
 
-    param = set_parameter(
-        svm_type, kernel_type, degree, gamma, coef0, nu, cache_size,
-        C, tol, tol, shrinking, probability, <int>
-        class_weight.shape[0], class_weight_label.data,
-        class_weight.data, max_iter, random_seed)
+    param = set_parameter(svm_type, kernel_index, degree, gamma, coef0, nu, cache_size,
+                          C, epsilon, tol, shrinking, probability,
+                          <int> class_weight.shape[0], class_weight_label.data,
+                          class_weight.data, max_iter, random_seed)
 
-    # model = csr_set_model(param, <int> nSV.shape[0], SV.data, SV.shape,
-    #                   support.data, support.shape, sv_coef.strides,
-    #                   sv_coef.data, intercept.data, nSV.data, probA.data, probB.data)
-
+    # model = csr_set_model(param, <int> nSV.shape[0], SV.data,
+    #                       SV_indices.shape, SV_indices.data,
+    #                       SV_indptr.shape, SV_indptr.data,
+    #                       sv_coef.data, intercept.data,
+    #                       nSV.data, probA.data, probB.data)
     # try:
     #     with nogil:
-    #         rv = csr_save_model(model_file_name, model)
+    #         rv = svm_csr_save_model(model_file_name, model)
     #     if rv < 0:
     #         raise IOError("Unable to write to file %s" % model_file_name)
     # finally:

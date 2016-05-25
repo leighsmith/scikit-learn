@@ -492,9 +492,8 @@ class BaseLibSVM(six.with_metaclass(ABCMeta, BaseEstimator)):
         return safe_sparse_dot(self._dual_coef_, self.support_vectors_)
 
     def save_model_file(self, model_file_name):
-        # TODO somehow self._sparse is not created?
-        # save_model_file = self._sparse_save_model_file if self._sparse else self._dense_save_model_file
-        save_model_file_function = self._dense_save_model_file
+        # TODO self._sparse is not created until fit() is called.
+        save_model_file_function = self._sparse_save_model_file if self._sparse else self._dense_save_model_file
         if self.verbose:  # pragma: no cover
             print('[LibSVM]', end='')
         save_model_file_function(model_file_name)
@@ -503,7 +502,14 @@ class BaseLibSVM(six.with_metaclass(ABCMeta, BaseEstimator)):
         print('_sparse_save_model_file')
         libsvm_sparse.save_model_file(
             model_file_name,
-            svm_type=solver_type, sample_weight=sample_weight,
+            self.support_,
+            self.support_vectors_,
+            self.n_support_,
+            self._dual_coef_,
+            self._intercept_,
+            probA=self.probA_,
+            probB=self.probB_,
+            svm_type=solver_type,
             class_weight=self.class_weight_, kernel=self.kernel, C=self.C,
             nu=self.nu, probability=self.probability, degree=self.degree,
             shrinking=self.shrinking, tol=self.tol,
@@ -512,7 +518,6 @@ class BaseLibSVM(six.with_metaclass(ABCMeta, BaseEstimator)):
             max_iter=self.max_iter, random_seed=self._seed)
 
     def _dense_save_model_file(self, model_file_name):
-        print('_dense_save_model_file')
         solver_type = LIBSVM_IMPL.index(self._impl)
         libsvm.save_model_file(
             model_file_name,

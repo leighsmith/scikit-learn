@@ -382,14 +382,6 @@ void copy_probB(char *data, struct svm_csr_model *model, npy_intp * dims)
 }
 
 /*
- * Write the model to a libsvm compatible text file.
- */
-int csr_save_model(const char *model_file_name, struct svm_csr_model *model)
-{
-    /* svm_csr_save_model(model_file_name, model); */
-}
-
-/*
  * Some free routines. Some of them are nontrivial since a lot of
  * sharing happens across objects (they *must* be called in the
  * correct order)

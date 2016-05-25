@@ -37,7 +37,8 @@ cdef extern from "svm.h":
     svm_model *svm_train(svm_problem *, svm_parameter *, int *) nogil
     void svm_free_and_destroy_model(svm_model** model_ptr_ptr)
     void svm_cross_validation(svm_problem *, svm_parameter *, int nr_fold, double *target) nogil
-
+    # TODO check if nogil actually needed.
+    int svm_save_model(const char *, svm_model *) nogil
 
 cdef extern from "libsvm_helper.c":
     # this file contains methods for accessing libsvm 'hidden' fields
@@ -65,7 +66,5 @@ cdef extern from "libsvm_helper.c":
     np.npy_intp  get_l  (svm_model *)
     np.npy_intp  get_nr (svm_model *)
     int  free_problem   (svm_problem *)
-    # TODO check if nogil actually needed.
-    int save_model	(const char *, svm_model *) nogil
     int  free_model     (svm_model *)
     void set_verbosity(int)
