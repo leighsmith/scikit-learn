@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.sparse as sp
 
-from sklearn.utils.testing import assert_array_equal
+from sklearn.utils.testing import assert_array_equal, assert_raises_regex
 from sklearn.utils.testing import assert_equal
 from sklearn.utils.testing import assert_almost_equal
 from sklearn.utils.testing import assert_true
@@ -25,7 +25,7 @@ from sklearn.linear_model import (LinearRegression, Lasso, ElasticNet, Ridge,
                                   Perceptron, LogisticRegression,
                                   SGDClassifier)
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn import svm
 from sklearn import datasets
@@ -90,20 +90,37 @@ def test_ovr_partial_fit():
     assert_greater(np.mean(y == pred), 0.65)
 
     # Test when mini batches doesn't have all classes
+    # with SGDClassifier
+    X = np.abs(np.random.randn(14, 2))
+    y = [1, 1, 1, 1, 2, 3, 3, 0, 0, 2, 3, 1, 2, 3]
+
+    ovr = OneVsRestClassifier(SGDClassifier(n_iter=1, shuffle=False,
+                                            random_state=0))
+    ovr.partial_fit(X[:7], y[:7], np.unique(y))
+    ovr.partial_fit(X[7:], y[7:])
+    pred = ovr.predict(X)
+    ovr1 = OneVsRestClassifier(SGDClassifier(n_iter=1, shuffle=False,
+                                             random_state=0))
+    pred1 = ovr1.fit(X, y).predict(X)
+    assert_equal(np.mean(pred == y), np.mean(pred1 == y))
+
+
+def test_ovr_partial_fit_exceptions():
     ovr = OneVsRestClassifier(MultinomialNB())
-    ovr.partial_fit(iris.data[:60], iris.target[:60], np.unique(iris.target))
-    ovr.partial_fit(iris.data[60:], iris.target[60:])
-    pred = ovr.predict(iris.data)
-    ovr2 = OneVsRestClassifier(MultinomialNB())
-    pred2 = ovr2.fit(iris.data, iris.target).predict(iris.data)
-    
-    assert_almost_equal(pred, pred2)
-    assert_equal(len(ovr.estimators_), len(np.unique(iris.target)))
-    assert_greater(np.mean(iris.target == pred), 0.65)
+    X = np.abs(np.random.randn(14, 2))
+    y = [1, 1, 1, 1, 2, 3, 3, 0, 0, 2, 3, 1, 2, 3]
+    ovr.partial_fit(X[:7], y[:7], np.unique(y))
+    # A new class value which was not in the first call of partial_fit
+    # It should raise ValueError
+    y1 = [5] + y[7:-1]
+    assert_raises_regex(ValueError, "Mini-batch contains \[.+\] while classes"
+                                    " must be subset of \[.+\]",
+                        ovr.partial_fit, X=X[7:], y=y1)
 
 
 def test_ovr_ovo_regressor():
-    # test that ovr and ovo work on regressors which don't have a decision_function
+    # test that ovr and ovo work on regressors which don't have a decision_
+    # function
     ovr = OneVsRestClassifier(DecisionTreeRegressor())
     pred = ovr.fit(iris.data, iris.target).predict(iris.data)
     assert_equal(len(ovr.estimators_), n_classes)
@@ -205,7 +222,6 @@ def test_ovr_multiclass():
     for base_clf in (MultinomialNB(), LinearSVC(random_state=0),
                      LinearRegression(), Ridge(),
                      ElasticNet()):
-
         clf = OneVsRestClassifier(base_clf).fit(X, y)
         assert_equal(set(clf.classes_), classes)
         y_pred = clf.predict(np.array([[0, 0, 4]]))[0]
@@ -606,3 +622,47 @@ def test_ecoc_gridsearch():
     cv.fit(iris.data, iris.target)
     best_C = cv.best_estimator_.estimators_[0].C
     assert_true(best_C in Cs)
+
+
+def test_pairwise_indices():
+    clf_precomputed = svm.SVC(kernel='precomputed')
+    X, y = iris.data, iris.target
+
+    ovr_false = OneVsOneClassifier(clf_precomputed)
+    linear_kernel = np.dot(X, X.T)
+    ovr_false.fit(linear_kernel, y)
+
+    n_estimators = len(ovr_false.estimators_)
+    precomputed_indices = ovr_false.pairwise_indices_
+
+    for idx in precomputed_indices:
+        assert_equal(idx.shape[0] * n_estimators / (n_estimators - 1),
+                     linear_kernel.shape[0])
+
+
+def test_pairwise_attribute():
+    clf_precomputed = svm.SVC(kernel='precomputed')
+    clf_notprecomputed = svm.SVC()
+
+    for MultiClassClassifier in [OneVsRestClassifier, OneVsOneClassifier]:
+        ovr_false = MultiClassClassifier(clf_notprecomputed)
+        assert_false(ovr_false._pairwise)
+
+        ovr_true = MultiClassClassifier(clf_precomputed)
+        assert_true(ovr_true._pairwise)
+
+
+def test_pairwise_cross_val_score():
+    clf_precomputed = svm.SVC(kernel='precomputed')
+    clf_notprecomputed = svm.SVC(kernel='linear')
+
+    X, y = iris.data, iris.target
+
+    for MultiClassClassifier in [OneVsRestClassifier, OneVsOneClassifier]:
+        ovr_false = MultiClassClassifier(clf_notprecomputed)
+        ovr_true = MultiClassClassifier(clf_precomputed)
+
+        linear_kernel = np.dot(X, X.T)
+        score_precomputed = cross_val_score(ovr_true, linear_kernel, y)
+        score_linear = cross_val_score(ovr_false, X, y)
+        assert_array_equal(score_precomputed, score_linear)

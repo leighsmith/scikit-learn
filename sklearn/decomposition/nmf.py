@@ -19,7 +19,6 @@ import numbers
 import numpy as np
 import scipy.sparse as sp
 
-from ..externals import six
 from ..base import BaseEstimator, TransformerMixin
 from ..utils import check_random_state, check_array
 from ..utils.extmath import randomized_svd, safe_sparse_dot, squared_norm
@@ -28,6 +27,9 @@ from ..utils.validation import check_is_fitted, check_non_negative
 from ..utils import deprecated
 from ..exceptions import ConvergenceWarning
 from .cdnmf_fast import _update_cdnmf_fast
+
+
+INTEGER_TYPES = (numbers.Integral, np.integer)
 
 
 def safe_vstack(Xs):
@@ -747,11 +749,11 @@ def non_negative_factorization(X, W=None, H=None, n_components=None,
     if n_components is None:
         n_components = n_features
 
-    if not isinstance(n_components, six.integer_types) or n_components <= 0:
-        raise ValueError("Number of components must be positive;"
+    if not isinstance(n_components, INTEGER_TYPES) or n_components <= 0:
+        raise ValueError("Number of components must be a positive integer;"
                          " got (n_components=%r)" % n_components)
-    if not isinstance(max_iter, numbers.Number) or max_iter < 0:
-        raise ValueError("Maximum number of iteration must be positive;"
+    if not isinstance(max_iter, INTEGER_TYPES) or max_iter < 0:
+        raise ValueError("Maximum number of iterations must be a positive integer;"
                          " got (max_iter=%r)" % max_iter)
     if not isinstance(tol, numbers.Number) or tol < 0:
         raise ValueError("Tolerance for stopping criteria must be "
@@ -1014,14 +1016,6 @@ class NMF(BaseEstimator, TransformerMixin):
         H : array-like, shape (n_components, n_features)
             If init='custom', it is used as initial guess for the solution.
 
-        Attributes
-        ----------
-        components_ : array-like, shape (n_components, n_features)
-            Factorization matrix, sometimes called 'dictionary'.
-
-        n_iter_ : int
-            Actual number of iterations for the transform.
-
         Returns
         -------
         W: array, shape (n_samples, n_components)
@@ -1059,14 +1053,6 @@ class NMF(BaseEstimator, TransformerMixin):
         X: {array-like, sparse matrix}, shape (n_samples, n_features)
             Data matrix to be decomposed
 
-        Attributes
-        ----------
-        components_ : array-like, shape (n_components, n_features)
-            Factorization matrix, sometimes called 'dictionary'.
-
-        n_iter_ : int
-            Actual number of iterations for the transform.
-
         Returns
         -------
         self
@@ -1081,11 +1067,6 @@ class NMF(BaseEstimator, TransformerMixin):
         ----------
         X: {array-like, sparse matrix}, shape (n_samples, n_features)
             Data matrix to be transformed by the model
-
-        Attributes
-        ----------
-        n_iter_ : int
-            Actual number of iterations for the transform.
 
         Returns
         -------
@@ -1104,15 +1085,15 @@ class NMF(BaseEstimator, TransformerMixin):
             nls_max_iter=self.nls_max_iter, sparseness=self.sparseness,
             beta=self.beta, eta=self.eta)
 
-        self.n_iter_ = n_iter_
         return W
 
     def inverse_transform(self, W):
-        """
+        """Transform data back to its original space.
+
         Parameters
         ----------
         W: {array-like, sparse matrix}, shape (n_samples, n_components)
-            Transformed Data matrix
+            Transformed data matrix
 
         Returns
         -------

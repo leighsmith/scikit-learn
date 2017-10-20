@@ -18,6 +18,7 @@ import scipy.sparse as sp
 
 from ..base import BaseEstimator, ClusterMixin, TransformerMixin
 from ..metrics.pairwise import euclidean_distances
+from ..metrics.pairwise import pairwise_distances_argmin_min
 from ..utils.extmath import row_norms, squared_norm
 from ..utils.sparsefuncs_fast import assign_rows_csr
 from ..utils.sparsefuncs import mean_variance_axis
@@ -77,7 +78,7 @@ def _k_init(X, n_clusters, x_squared_norms, random_state, n_local_trials=None):
     """
     n_samples, n_features = X.shape
 
-    centers = np.empty((n_clusters, n_features))
+    centers = np.empty((n_clusters, n_features), dtype=X.dtype)
 
     assert x_squared_norms is not None, 'x_squared_norms None in _k_init'
 
@@ -305,7 +306,7 @@ def k_means(X, n_clusters, init='k-means++', precompute_distances='auto',
         X -= X_mean
 
     if hasattr(init, '__array__'):
-        init = check_array(init, dtype=np.float64, copy=True)
+        init = check_array(init, dtype=X.dtype.type, copy=True)
         _validate_center_shape(X, n_clusters, init)
 
         init -= X_mean
@@ -396,7 +397,7 @@ def _kmeans_single_elkan(X, n_clusters, max_iter=300, init='k-means++',
         print('Initialization complete')
     centers, labels, n_iter = k_means_elkan(X, n_clusters, centers, tol=tol,
                                             max_iter=max_iter, verbose=verbose)
-    inertia = np.sum((X - centers[labels]) ** 2)
+    inertia = np.sum((X - centers[labels]) ** 2, dtype=np.float64)
     return labels, inertia, centers, n_iter
 
 
@@ -478,7 +479,7 @@ def _kmeans_single_lloyd(X, n_clusters, max_iter=300, init='k-means++',
 
     # Allocate memory to store the distances for each sample to its
     # closer center for reallocation in case of ties
-    distances = np.zeros(shape=(X.shape[0],), dtype=np.float64)
+    distances = np.zeros(shape=(X.shape[0],), dtype=X.dtype)
 
     # iterations
     for i in range(max_iter):
@@ -552,17 +553,14 @@ def _labels_inertia_precompute_dense(X, x_squared_norms, centers, distances):
 
     """
     n_samples = X.shape[0]
-    k = centers.shape[0]
-    all_distances = euclidean_distances(centers, X, x_squared_norms,
-                                        squared=True)
-    labels = np.empty(n_samples, dtype=np.int32)
-    labels.fill(-1)
-    mindist = np.empty(n_samples)
-    mindist.fill(np.infty)
-    for center_id in range(k):
-        dist = all_distances[center_id]
-        labels[dist < mindist] = center_id
-        mindist = np.minimum(dist, mindist)
+
+    # Breakup nearest neighbor distance computation into batches to prevent
+    # memory blowup in the case of a large number of samples and clusters.
+    # TODO: Once PR #7383 is merged use check_inputs=False in metric_kwargs.
+    labels, mindist = pairwise_distances_argmin_min(
+        X=X, Y=centers, metric='euclidean', metric_kwargs={'squared': True})
+    # cython k-means code assumes int32 inputs
+    labels = labels.astype(np.int32)
     if n_samples == distances.shape[0]:
         # distances will be changed in-place
         distances[:] = mindist
@@ -586,13 +584,13 @@ def _labels_inertia(X, x_squared_norms, centers,
         Precomputed squared euclidean norm of each data point, to speed up
         computations.
 
-    centers: float64 array, shape (k, n_features)
+    centers: float array, shape (k, n_features)
         The cluster centers.
 
     precompute_distances : boolean, default: True
         Precompute distances (faster but takes more memory).
 
-    distances: float64 array, shape (n_samples,)
+    distances: float array, shape (n_samples,)
         Pre-allocated array to be filled in with each sample's distance
         to the closest center.
 
@@ -609,7 +607,7 @@ def _labels_inertia(X, x_squared_norms, centers,
     # easily
     labels = -np.ones(n_samples, np.int32)
     if distances is None:
-        distances = np.zeros(shape=(0,), dtype=np.float64)
+        distances = np.zeros(shape=(0,), dtype=X.dtype)
     # distances will be changed in-place
     if sp.issparse(X):
         inertia = _k_means._assign_labels_csr(
@@ -685,9 +683,12 @@ def _init_centroids(X, k, init, random_state=None, x_squared_norms=None,
         seeds = random_state.permutation(n_samples)[:k]
         centers = X[seeds]
     elif hasattr(init, '__array__'):
-        centers = init
+        # ensure that the centers have the same dtype as X
+        # this is a requirement of fused types of cython
+        centers = np.array(init, dtype=X.dtype)
     elif callable(init):
         centers = init(X, k, random_state=random_state)
+        centers = np.asarray(centers, dtype=X.dtype)
     else:
         raise ValueError("the init parameter for the k-means should "
                          "be 'k-means++' or 'random' or an ndarray, "
@@ -789,6 +790,31 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
     inertia_ : float
         Sum of distances of samples to their closest cluster center.
 
+    Examples
+    --------
+
+    >>> from sklearn.cluster import KMeans
+    >>> import numpy as np
+    >>> X = np.array([[1, 2], [1, 4], [1, 0],
+    ...               [4, 2], [4, 4], [4, 0]])
+    >>> kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
+    >>> kmeans.labels_
+    array([0, 0, 0, 1, 1, 1], dtype=int32)
+    >>> kmeans.predict([[0, 0], [4, 4]])
+    array([0, 1], dtype=int32)
+    >>> kmeans.cluster_centers_
+    array([[ 1.,  2.],
+           [ 4.,  2.]])
+
+    See also
+    --------
+
+    MiniBatchKMeans
+        Alternative online implementation that does incremental updates
+        of the centers positions using mini-batches.
+        For large scale learning (say n_samples > 10k) MiniBatchKMeans is
+        probably much faster than the default batch implementation.
+
     Notes
     ------
     The k-means problem is solved using Lloyd's algorithm.
@@ -803,15 +829,6 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
     In practice, the k-means algorithm is very fast (one of the fastest
     clustering algorithms available), but it falls in local minima. That's why
     it can be useful to restart it several times.
-
-    See also
-    --------
-
-    MiniBatchKMeans:
-        Alternative online implementation that does incremental updates
-        of the centers positions using mini-batches.
-        For large scale learning (say n_samples > 10k) MiniBatchKMeans is
-        probably much faster to than the default batch implementation.
 
     """
 
@@ -834,15 +851,14 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
 
     def _check_fit_data(self, X):
         """Verify that the number of samples given is larger than k"""
-        X = check_array(X, accept_sparse='csr', dtype=np.float64)
+        X = check_array(X, accept_sparse='csr', dtype=[np.float64, np.float32])
         if X.shape[0] < self.n_clusters:
             raise ValueError("n_samples=%d should be >= n_clusters=%d" % (
                 X.shape[0], self.n_clusters))
         return X
 
     def _check_test_data(self, X):
-        X = check_array(X, accept_sparse='csr', dtype=FLOAT_DTYPES,
-                        warn_on_dtype=True)
+        X = check_array(X, accept_sparse='csr', dtype=FLOAT_DTYPES)
         n_samples, n_features = X.shape
         expected_n_features = self.cluster_centers_.shape[1]
         if not n_features == expected_n_features:
@@ -858,17 +874,19 @@ class KMeans(BaseEstimator, ClusterMixin, TransformerMixin):
         Parameters
         ----------
         X : array-like or sparse matrix, shape=(n_samples, n_features)
+            Training instances to cluster.
         """
         random_state = check_random_state(self.random_state)
         X = self._check_fit_data(X)
 
         self.cluster_centers_, self.labels_, self.inertia_, self.n_iter_ = \
             k_means(
-                X, n_clusters=self.n_clusters, init=self.init, n_init=self.n_init,
-                max_iter=self.max_iter, verbose=self.verbose,
+                X, n_clusters=self.n_clusters, init=self.init,
+                n_init=self.n_init, max_iter=self.max_iter, verbose=self.verbose,
                 precompute_distances=self.precompute_distances,
                 tol=self.tol, random_state=random_state, copy_x=self.copy_x,
-                n_jobs=self.n_jobs, algorithm=self.algorithm, return_n_iter=True)
+                n_jobs=self.n_jobs, algorithm=self.algorithm,
+                return_n_iter=True)
         return self
 
     def fit_predict(self, X, y=None):
@@ -983,7 +1001,7 @@ def _mini_batch_step(X, x_squared_norms, centers, counts,
          The vector in which we keep track of the numbers of elements in a
          cluster. This array is MODIFIED IN PLACE
 
-    distances : array, dtype float64, shape (n_samples), optional
+    distances : array, dtype float, shape (n_samples), optional
         If not None, should be a pre-allocated array that will be used to store
         the distances of each sample to its closest center.
         May not be None when random_reassign is True.
@@ -1084,7 +1102,9 @@ def _mini_batch_step(X, x_squared_norms, centers, counts,
             counts[center_idx] += count
 
             # inplace rescale to compute mean of all points (old and new)
-            centers[center_idx] /= counts[center_idx]
+            # Note: numpy >= 1.10 does not support '/=' for the following
+            # expression for a mixture of int and float (see numpy issue #6464)
+            centers[center_idx] = centers[center_idx] / counts[center_idx]
 
             # update the squared diff if necessary
             if compute_squared_diff:
@@ -1162,6 +1182,8 @@ def _mini_batch_convergence(model, iteration_idx, n_iter, tol,
 
 class MiniBatchKMeans(KMeans):
     """Mini-Batch K-Means clustering
+
+    Read more in the :ref:`User Guide <mini_batch_kmeans>`.
 
     Parameters
     ----------
@@ -1253,9 +1275,18 @@ class MiniBatchKMeans(KMeans):
         defined as the sum of square distances of samples to their nearest
         neighbor.
 
+    See also
+    --------
+
+    KMeans
+        The classic implementation of the clustering method based on the
+        Lloyd's algorithm. It consumes the whole set of input data at each
+        iteration.
+
     Notes
     -----
     See http://www.eecs.tufts.edu/~dsculley/papers/fastkmeans.pdf
+
     """
 
     def __init__(self, n_clusters=8, init='k-means++', max_iter=100,
@@ -1278,11 +1309,12 @@ class MiniBatchKMeans(KMeans):
 
         Parameters
         ----------
-        X : array-like, shape = [n_samples, n_features]
-            Coordinates of the data points to cluster
+        X : array-like or sparse matrix, shape=(n_samples, n_features)
+            Training instances to cluster.
         """
         random_state = check_random_state(self.random_state)
-        X = check_array(X, accept_sparse="csr", order='C', dtype=np.float64)
+        X = check_array(X, accept_sparse="csr", order='C',
+                        dtype=[np.float64, np.float32])
         n_samples, n_features = X.shape
         if n_samples < self.n_clusters:
             raise ValueError("Number of samples smaller than number "
@@ -1290,7 +1322,7 @@ class MiniBatchKMeans(KMeans):
 
         n_init = self.n_init
         if hasattr(self.init, '__array__'):
-            self.init = np.ascontiguousarray(self.init, dtype=np.float64)
+            self.init = np.ascontiguousarray(self.init, dtype=X.dtype)
             if n_init != 1:
                 warnings.warn(
                     'Explicit initial center position passed: '
@@ -1307,14 +1339,14 @@ class MiniBatchKMeans(KMeans):
             # using tol-based early stopping needs the allocation of a
             # dedicated before which can be expensive for high dim data:
             # hence we allocate it outside of the main loop
-            old_center_buffer = np.zeros(n_features, np.double)
+            old_center_buffer = np.zeros(n_features, dtype=X.dtype)
         else:
             tol = 0.0
             # no need for the center buffer if tol-based early stopping is
             # disabled
-            old_center_buffer = np.zeros(0, np.double)
+            old_center_buffer = np.zeros(0, dtype=X.dtype)
 
-        distances = np.zeros(self.batch_size, dtype=np.float64)
+        distances = np.zeros(self.batch_size, dtype=X.dtype)
         n_batches = int(np.ceil(float(n_samples) / self.batch_size))
         n_iter = int(self.max_iter * n_batches)
 
@@ -1446,7 +1478,7 @@ class MiniBatchKMeans(KMeans):
         X = check_array(X, accept_sparse="csr")
         n_samples, n_features = X.shape
         if hasattr(self.init, '__array__'):
-            self.init = np.ascontiguousarray(self.init, dtype=np.float64)
+            self.init = np.ascontiguousarray(self.init, dtype=X.dtype)
 
         if n_samples == 0:
             return self
@@ -1472,10 +1504,10 @@ class MiniBatchKMeans(KMeans):
             # reassignment too often, to allow for building up counts
             random_reassign = self.random_state_.randint(
                 10 * (1 + self.counts_.min())) == 0
-            distances = np.zeros(X.shape[0], dtype=np.float64)
+            distances = np.zeros(X.shape[0], dtype=X.dtype)
 
         _mini_batch_step(X, x_squared_norms, self.cluster_centers_,
-                         self.counts_, np.zeros(0, np.double), 0,
+                         self.counts_, np.zeros(0, dtype=X.dtype), 0,
                          random_reassign=random_reassign, distances=distances,
                          random_state=self.random_state_,
                          reassignment_ratio=self.reassignment_ratio,
